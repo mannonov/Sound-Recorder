@@ -1,207 +1,170 @@
 package uz.behadllc.screenrecorder
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
-import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
+import android.media.MediaPlayer
 import android.media.MediaRecorder
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
-import android.os.Build
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.os.Environment
-import android.util.DisplayMetrics
-import android.view.View
-import android.widget.ToggleButton
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
+import android.util.Log
+import android.view.View.OnClickListener
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import com.google.android.material.snackbar.Snackbar
-import uz.behadllc.screenrecorder.databinding.ActivityMainBinding
-import java.lang.Exception
-import java.lang.StringBuilder
-import java.security.spec.ECField
-import java.text.SimpleDateFormat
-import java.util.*
+import java.io.IOException
+
+private const val LOG_TAG = "AudioRecordTest"
+private const val REQUEST_RECORD_AUDIO_PERMISSION = 200
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var binding: ActivityMainBinding
-    private lateinit var mediaProjectionManager: MediaProjectionManager
-    private var mediaProjection: MediaProjection? = null
-    private lateinit var mediaRecorder: MediaRecorder
-    private lateinit var virtualDisplay: VirtualDisplay
-    private lateinit var mediaProjectionCallBack: MediaProjectionCallBack
+    private var fileName: String = ""
 
-    private var screenDensity = 0
-    private var videoUri = ""
+    private var recordButton: RecordButton? = null
+    private var recorder: MediaRecorder? = null
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+    private var playButton: PlayButton? = null
+    private var player: MediaPlayer? = null
 
-        val metrics = DisplayMetrics()
-        windowManager.defaultDisplay.getMetrics(metrics)
-        screenDensity = metrics.densityDpi
-
-        mediaRecorder = MediaRecorder()
-        mediaProjectionManager =
-            getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-
-        binding.btnStartStopRecord.setOnClickListener {
-            if (ContextCompat.checkSelfPermission(this@MainActivity,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-            ) {
-                if (ActivityCompat.shouldShowRequestPermissionRationale(this@MainActivity,
-                        Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                ) {
-                    binding.btnStartStopRecord.isChecked = false
-                    Snackbar.make(binding.root, "Permissions", Snackbar.LENGTH_INDEFINITE)
-                        .setAction("ENABLE"
-                        ) {
-                            ActivityCompat.requestPermissions(this@MainActivity,
-                                listOf(Manifest.permission.WRITE_EXTERNAL_STORAGE).toTypedArray(),
-                                Constants.REQUEST_PERMISSION)
-                        }.show()
-                } else {
-                    ActivityCompat.requestPermissions(this@MainActivity,
-                        listOf(Manifest.permission.WRITE_EXTERNAL_STORAGE).toTypedArray(),
-                        Constants.REQUEST_PERMISSION)
-                }
-            } else {
-                screenShare(it)
-            }
-        }
-
-    }
-
-    private fun screenShare(view: View) {
-        if ((view as ToggleButton).isChecked) {
-            initRecorder()
-            recordScreen()
-        } else {
-            mediaRecorder.stop()
-            mediaRecorder.reset()
-            stopRecordScreen()
-        }
-    }
-
-    private fun recordScreen() {
-
-        if (mediaProjection == null) {
-            launcher.launch(mediaProjectionManager.createScreenCaptureIntent())
-            return
-        }
-
-        virtualDisplay = createVirtualDisplay()
-
-    }
-
-    private fun createVirtualDisplay(): VirtualDisplay {
-        return mediaProjection!!.createVirtualDisplay("MainActivity",
-            Constants.DISPLAY_WIDTH,
-            Constants.DISPLAY_HEIGHT,
-            screenDensity,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            mediaRecorder.surface, null, null)
-    }
-
-    private fun initRecorder() {
-        try {
-
-            mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-
-            videoUri =
-                "${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)}/${
-                    StringBuilder().append(SimpleDateFormat("JAKHA_RECORD_dd-MM-yyyy-hh_mm_ss").format(
-                        Date()))
-                }.mp4"
-
-            mediaRecorder.setOutputFile(videoUri)
-            mediaRecorder.setVideoSize(Constants.DISPLAY_WIDTH, Constants.DISPLAY_HEIGHT)
-            mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            mediaRecorder.setVideoEncodingBitRate(512 * 1000)
-            mediaRecorder.setVideoFrameRate(30)
-
-            val rotation = windowManager.defaultDisplay.rotation
-            val orientation = Constants.ORIENTATIONS.get(rotation * 90)
-
-            mediaRecorder.setOrientationHint(orientation)
-            mediaRecorder.prepare()
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    private val launcher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (it.resultCode == RESULT_OK) {
-                mediaProjectionCallBack = MediaProjectionCallBack()
-                mediaProjection =
-                    mediaProjectionManager.getMediaProjection(it.resultCode, it.data!!)
-                mediaProjection!!.registerCallback(mediaProjectionCallBack, null)
-                virtualDisplay = createVirtualDisplay()
-            }
-        }
-
-    inner class MediaProjectionCallBack : MediaProjection.Callback() {
-        override fun onStop() {
-            super.onStop()
-            if (binding.btnStartStopRecord.isChecked) {
-                binding.btnStartStopRecord.isChecked = false
-                mediaRecorder.stop()
-                mediaRecorder.reset()
-            }
-            mediaProjection = null
-            stopRecordScreen()
-        }
-    }
-
-    fun stopRecordScreen() {
-        if (virtualDisplay == null) return
-        virtualDisplay.release()
-        destroyMediaProjection()
-    }
-
-    fun destroyMediaProjection() {
-        if (mediaProjection != null) {
-            mediaProjection!!.unregisterCallback(mediaProjectionCallBack)
-            mediaProjection!!.stop()
-            mediaProjection = null
-        }
-    }
+    // Requesting permission to RECORD_AUDIO
+    private var permissionToRecordAccepted = false
+    private var permissions: Array<String> = arrayOf(Manifest.permission.RECORD_AUDIO,Manifest.permission.WRITE_EXTERNAL_STORAGE)
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
+        permissions: Array<String>,
+        grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            Constants.REQUEST_PERMISSION -> {
-                if ((grantResults.isNotEmpty()) && (grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
-                    screenShare(binding.btnStartStopRecord)
-                } else {
-                    binding.btnStartStopRecord.isChecked = false
-                    Snackbar.make(binding.root, "Permissions", Snackbar.LENGTH_INDEFINITE)
-                        .setAction("ENABLE"
-                        ) {
-                            ActivityCompat.requestPermissions(this@MainActivity,
-                                listOf(Manifest.permission.WRITE_EXTERNAL_STORAGE).toTypedArray(),
-                                Constants.REQUEST_PERMISSION)
-                        }.show()
-                }
-                return
+        permissionToRecordAccepted = if (requestCode == REQUEST_RECORD_AUDIO_PERMISSION) {
+            grantResults[0] == PackageManager.PERMISSION_GRANTED && grantResults[1] == PackageManager.PERMISSION_GRANTED
+        } else {
+            false
+        }
+        if (!permissionToRecordAccepted) finish()
+    }
+
+    private fun onRecord(start: Boolean) = if (start) {
+        startRecording()
+    } else {
+        stopRecording()
+    }
+
+    private fun onPlay(start: Boolean) = if (start) {
+        startPlaying()
+    } else {
+        stopPlaying()
+    }
+
+    private fun startPlaying() {
+        player = MediaPlayer().apply {
+            try {
+                setDataSource(fileName)
+                prepare()
+                start()
+            } catch (e: IOException) {
+                Log.e(LOG_TAG, "prepare() failed")
             }
         }
     }
 
+    private fun stopPlaying() {
+        player?.release()
+        player = null
+    }
 
+    private fun startRecording() {
+        recorder = MediaRecorder().apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP)
+            setOutputFile(fileName)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
+
+            try {
+                prepare()
+            } catch (e: IOException) {
+                Log.e(LOG_TAG, "prepare() failed")
+            }
+
+            start()
+        }
+    }
+
+    private fun stopRecording() {
+        recorder?.apply {
+            stop()
+            release()
+        }
+        recorder = null
+    }
+
+    internal inner class RecordButton(ctx: Context) : androidx.appcompat.widget.AppCompatButton(ctx) {
+
+        var mStartRecording = true
+
+        var clicker: OnClickListener = OnClickListener {
+            onRecord(mStartRecording)
+            text = when (mStartRecording) {
+                true -> "Stop recording"
+                false -> "Start recording"
+            }
+            mStartRecording = !mStartRecording
+        }
+
+        init {
+            text = "Start recording"
+            setOnClickListener(clicker)
+        }
+    }
+
+    internal inner class PlayButton(ctx: Context) : androidx.appcompat.widget.AppCompatButton(ctx) {
+        var mStartPlaying = true
+        var clicker: OnClickListener = OnClickListener {
+            onPlay(mStartPlaying)
+            text = when (mStartPlaying) {
+                true -> "Stop playing"
+                false -> "Start playing"
+            }
+            mStartPlaying = !mStartPlaying
+        }
+
+        init {
+            text = "Start playing"
+            setOnClickListener(clicker)
+        }
+    }
+
+    override fun onCreate(icicle: Bundle?) {
+        super.onCreate(icicle)
+
+        // Record to the external cache directory for visibility
+        fileName = "${externalCacheDir!!.absolutePath}/audiorecordtest.3gp"
+
+        ActivityCompat.requestPermissions(this, permissions, REQUEST_RECORD_AUDIO_PERMISSION)
+
+        recordButton = RecordButton(this)
+        playButton = PlayButton(this)
+        val ll = LinearLayout(this).apply {
+            addView(recordButton,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    0f))
+            addView(playButton,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    0f))
+        }
+        setContentView(ll)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        recorder?.release()
+        recorder = null
+        player?.release()
+        player = null
+    }
 }
